@@ -1,0 +1,392 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+struct _GPS_buf
+{
+	char data[256];
+	char flag_data[256];
+};//缓冲区
+/*emea的信息内容*/
+struct _GPS_information
+{
+	char locate_type;			//定位类型
+	char time[11];				//UTC 时间，hhmmss.sss，时分秒格式
+	char date[7];					//UTC日期，DDMMYY格式
+	char NS;					//南北维度
+	char latitude[10];				//维度
+	char EW;					//东西经度
+	char longitude[11];				//经度
+	char c_GPS_status;
+	double d_GPS_status;		//gps状态
+	double GPS_status_n;		//综合定位判断
+	double NUM_satellite;			//正在使用的卫星数量（00 - 12）（前导位数不足则补0）
+	char ALL_NUM_GSV;			//本次GSV语句的总数目（1 - 3
+	char NUM_GSV;				//本条GSV语句是本次GSV语句的第几条（1 - 3）
+	char ALL_NUM_satellite;		//当前可见卫星总数（00 - 12）（前导位数不足则补0）
+	double GSA_PRN[256];			//参与定位的PRN 码（伪随机噪声码）（01 - 32）（前导位数不足则补0）
+	double GSV_SNR[256];			//GPGSV中随机码和信噪比（00－99）dbHz
+	char AV;					//状态，A=定位，V=未定位
+	double N_speed;				//速度，节，Knots
+	char speed_angle;			//方位角，度
+	char N;						//N_speed的单位
+	double K_speed;				//水平运动速度（0.00）（前导位数不足则补0）
+	char K;						//K=公里/时，km/h
+};
+
+/*逗号替换为NULL，并保存逗号所处位子信息*/
+char comma[32];
+void replace_comma(char *buffer)
+{
+	memset(comma,0,sizeof(comma));
+	int i,len,j;
+	len=strlen(buffer);
+	for(i=0,j=0;i<len;i++)
+	{
+		if(buffer[i]==',')
+		{
+			comma[j]=i;
+			j++;
+			buffer[i]=NULL;
+		}
+	}
+}
+/*第N个信息的偏移地址*/
+char *num_p(char *buffer,char num)
+{	
+	return &buffer[comma[num-1]+1];
+}
+
+/********************************输出函数********************************/
+void speed_output(double N_speed,double K_speed)//速度输出函数
+{
+	printf("速度：%3.3f节(%3.3fkm/h) \n",N_speed,K_speed);//速度
+}
+void NUM_satellite_output(double NUM_satellite)//卫星颗数输出
+{
+	printf("使用的卫星数%2.0f \n",NUM_satellite);//参与卫星颗数
+}
+void GPS_status_output(double GPS_status_n)//定位状态输出
+{
+	if(GPS_status_n==0)
+		printf("GPS未定位 \n");//定位状态
+	else if(GPS_status_n==1)
+		printf("已定位 \n");
+}
+void EWNS_output(char EW,char *longitude,char NS,char *latitude)//经纬度输出
+{
+	if(EW=='E')
+		printf("东经：");
+	else
+		printf("西经：");
+	printf("%s \n",longitude);//经度
+	if(NS=='N')
+		printf("北纬：");
+	else
+		printf("南纬：");		
+	printf("%s \n",latitude);//纬度
+}
+void date_output(const char *date,const char *time)//时间和日期输出
+{
+	printf("日期：%c%c年%c%c月%c%c日",date[4],date[5],date[2],date[3],date[0],date[1]);
+	printf("%c%c时%c%c分%c%c秒 \n",time[0],time[1],time[2],time[3],time[4],time[5]);	//年月日时分秒
+}
+int s_number(int serial_number)//序列号
+{
+	serial_number++;
+	printf("******************************\n序号：%d\n",serial_number);//序号
+	return serial_number;
+}
+void PRN_output(double l_SNR,double *GSA_PRN,double *GSV_SNR)//信号强度输出
+{
+	int i,j;
+		for(i=0;i<16;i++)
+	{
+		for(j=0;j<32;j++,j++)
+		{
+			if(GSA_PRN[i]==GSV_SNR[j]&&GSA_PRN[i]!=0&&l_SNR<=GSV_SNR[j+1])
+				printf("PRN码:%3.0f 信号强度:%3.1f\n",GSA_PRN[i],GSV_SNR[j+1]);
+		}
+	}	
+
+}
+
+/******************************定位包起始数据******************************/
+void BEGAN(char *start,FILE *fp,char *data)//获取定位包起始数据
+{
+
+	while(1)
+	{
+		fgets(data,256,fp);
+		if(strstr(data,"GGA"))
+		{
+			strcpy(start,"GGA");
+			break;
+		}
+		else if(strstr(data,"GSA"))
+		{
+			strcpy(start,"GSA");
+			break;
+		}
+		else if(strstr(data,"GSV"))
+		{
+			strcpy(start,"GSV");
+			break;
+		}
+		else if(strstr(data,"RMC"))
+		{
+			strcpy(start,"RMC");
+			break;
+		}
+		else if(strstr(data,"VTG"))
+		{
+			strcpy(start,"VTG");
+			break;
+		}
+		else if(strstr(data,"GLL"))
+		{
+			strcpy(start,"GLL");
+			break;
+		}
+	}
+	
+}
+
+/********************************键入信息函数*********************************/
+double GPS_status(double flag_GPS_status)//获取查询功能中的定位状态信息
+{
+	double l_flag_GPS_status,h_flag_GPS_status;
+	printf("是否定位(0.未定位 1.定位 -1.跳过)\n");
+	while(1)
+	{
+		scanf("%lf",&flag_GPS_status);
+		if(flag_GPS_status==1)
+		{
+			l_flag_GPS_status=0.999;
+			h_flag_GPS_status=1.001;
+			break;
+		}
+		else if(flag_GPS_status==0)
+		{
+			l_flag_GPS_status=-0.001;
+			h_flag_GPS_status=0.001;
+			break;
+		}
+		else if(flag_GPS_status==-1)
+		{
+			l_flag_GPS_status=-0.999;
+			h_flag_GPS_status=-1.001;
+			break;
+		}
+		else
+			printf("请重新输入\n");
+	}
+	return flag_GPS_status;
+}
+double num_satellite(double flag_NUM_satellite)//参与定位卫星颗数筛选值
+{
+	printf("参与定位的卫星颗数 跳过请输入-1\n");
+	while(1)
+	{
+		scanf("%lf",&flag_NUM_satellite);
+		if(flag_NUM_satellite>=0&&flag_NUM_satellite<=12)
+		{
+			flag_NUM_satellite=(int)flag_NUM_satellite;
+			break;
+		}
+		else if(flag_NUM_satellite==-1)
+			break;
+		else
+			printf("请重新输入\n");
+	}
+	return flag_NUM_satellite;
+}
+double l_speed(double l_flag_K_speed)//最低速度
+{
+	printf("速度下限km/h\n");
+	scanf("%lf",&l_flag_K_speed);
+	return l_flag_K_speed;
+}
+double h_speed(double h_flag_K_speed)//最高速度
+{
+	printf("速度上限km/h\n");
+	scanf("%lf",&h_flag_K_speed);
+	return h_flag_K_speed;
+}
+double SNR(double l_SNR)//参考信噪比最低值
+{
+	printf("卫星信号强度最低值\n");
+	scanf("%lf",&l_SNR);
+	return l_SNR;
+}
+double flag_next(double next)//主界面
+{
+	printf("查询请按1，退出请按2\n");
+	scanf("%lf",&next);
+	return next;
+}
+
+void main()
+{
+	struct _GPS_buf GPS_buf;//缓冲区
+	struct _GPS_information *GPS_information;
+	GPS_information=(struct _GPS_information*)malloc(sizeof(struct _GPS_information));
+	int serial_number=0;//序号
+	double l_SNR;//最低信噪比
+	char *temp;
+	char start[4];//定位包起始位
+	int over;
+	double next;
+	int i1,i2,j2,i3,j3;
+	FILE *fp=NULL;
+	next;
+	while(1)
+	{
+		next=flag_next(next);//主界面
+		if(next==2)
+			break;
+		if(next==1)	//开始筛选
+		{
+			double flag_GPS_status;
+			double l_flag_K_speed,h_flag_K_speed;
+			double flag_NUM_satellite;
+			serial_number=0;
+			if((fp=fopen("NMEA.txt","r"))==NULL)	
+				printf("error");
+			printf("请输入查询条件\n是否定位(1.定位 0.未定位)\n速度范围(速度下限值 速度上限值)\n参与定位的卫星颗数\n卫星信号强度\n\n");
+			BEGAN(start,fp,GPS_buf.data);//获取定位包起始信息
+			flag_GPS_status=GPS_status(flag_GPS_status);//设置定位状态
+			l_flag_K_speed=l_speed(l_flag_K_speed);
+			h_flag_K_speed=h_speed(h_flag_K_speed);//获取高低速度筛选参数
+			flag_NUM_satellite=num_satellite(flag_NUM_satellite);//设置定位卫星颗数
+			l_SNR=SNR(l_SNR);//获取最低信噪比
+			
+			while(1)	//处理整个文件
+			{
+				GPS_information->locate_type=0;			//定位类型
+				memset(GPS_information->time,'/0',sizeof(GPS_information->time));				//UTC 时间，hhmmss.sss，时分秒格式
+				memset(GPS_information->date,'/0',sizeof(GPS_information->date));					//UTC日期，DDMMYY格式
+				GPS_information->NS=0;					//南北维度
+				memset(GPS_information->latitude,'/0',sizeof(GPS_information->latitude));			//维度
+				GPS_information->EW=0;					//东西经度
+				memset(GPS_information->longitude,'/0',sizeof(GPS_information->longitude));				//经度
+				GPS_information->c_GPS_status=0;
+				GPS_information->d_GPS_status=0;		//gps状态
+				GPS_information->GPS_status_n=0;
+				GPS_information->NUM_satellite=0;			//正在使用的卫星数量（00 - 12）（前导位数不足则补0）
+				GPS_information->ALL_NUM_GSV=0;			//本次GSV语句的总数目（1 - 3
+				GPS_information->NUM_GSV=0;				//本条GSV语句是本次GSV语句的第几条（1 - 3）
+				GPS_information->ALL_NUM_satellite=0;		//当前可见卫星总数（00 - 12）（前导位数不足则补0）
+				memset(GPS_information->GSV_SNR,'/0',sizeof(GPS_information->GSV_SNR));			//参与定位的PRN 码（伪随机噪声码）（01 - 32）（前导位数不足则补0）
+				memset(GPS_information->GSV_SNR,'/0',sizeof(GPS_information->GSV_SNR));			//GPGSV中随机码和信噪比（00－99）dbHz
+				GPS_information->AV=0;					//状态，A=定位，V=未定位
+				GPS_information->N_speed=0;				//速度，节，Knots
+				GPS_information->speed_angle=0;			//方位角，度
+				GPS_information->N=0;						//N_speed的单位
+				GPS_information->K_speed=0;				//水平运动速度（0.00）（前导位数不足则补0）
+				GPS_information->K=0;						//K=公里/时，km/h
+				i2=0;
+				i3=1;
+				over=0;
+				do		//处理一个数据包
+				{	
+					over++;
+					if(over>65536)	//退出do，while，文件处理完成
+						break;
+					replace_comma(GPS_buf.data);
+					if(strstr(GPS_buf.data,"GGA"))
+					{
+						
+						temp=num_p(GPS_buf.data,1);
+						memcpy(GPS_information->time,temp,10);//时间
+						temp=num_p(GPS_buf.data,2);
+						memcpy(GPS_information->latitude,temp,10);
+						GPS_information->NS=*(num_p(GPS_buf.data,3));//维度
+						temp=num_p(GPS_buf.data,4);
+						memcpy(GPS_information->longitude,temp,11);
+						GPS_information->EW=*(num_p(GPS_buf.data,5));//经度
+						GPS_information->d_GPS_status=*(num_p(GPS_buf.data,6));//gps定位状态
+						GPS_information->NUM_satellite=atof(num_p(GPS_buf.data,7));//参与定位卫星数
+						
+					}
+					if(strstr(GPS_buf.data,"GSA"))
+					{	
+						for(i1=0;i1<12;i1++)
+						{
+							GPS_information->GSA_PRN[i1]=atof(num_p(GPS_buf.data,i1+3));
+						}
+					}
+					if(strstr(GPS_buf.data,"RMC"))
+					{
+
+						temp=num_p(GPS_buf.data,1);
+						memcpy(GPS_information->time,temp,10);//时间
+						GPS_information->c_GPS_status=*(num_p(GPS_buf.data,2));//gps定位状态
+						temp=num_p(GPS_buf.data,3);
+						memcpy(GPS_information->latitude,temp,10);
+						GPS_information->NS=*(num_p(GPS_buf.data,4));//维度
+						temp=num_p(GPS_buf.data,5);
+						memcpy(GPS_information->longitude,temp,11);
+						GPS_information->EW=*(num_p(GPS_buf.data,6));//经度
+						GPS_information->N_speed=atof(num_p(GPS_buf.data,7));//节速度
+						temp=num_p(GPS_buf.data,9);
+						memcpy(GPS_information->date,temp,6);//日期	
+					}
+					if(strstr(GPS_buf.data,"VTG"))
+					{
+						GPS_information->N_speed=atof(num_p(GPS_buf.data,5));//节速度
+						GPS_information->K_speed=atof(num_p(GPS_buf.data,7));//公里速度
+					}
+					if(strstr(GPS_buf.data,"GSV"))
+					{
+						j2=4;j3=7;
+						for(i2,j2;j2<17;i2++,i2++)
+						{
+							GPS_information->GSV_SNR[i2]=atof(num_p(GPS_buf.data,j2));
+							j2+=4;
+						}
+						for(i3,j3;j3<20;i3++,i3++)
+						{
+							GPS_information->GSV_SNR[i3]=atof(num_p(GPS_buf.data,j3));
+							j3+=4;
+						}
+					}
+					if(strstr(GPS_buf.data,"GLL"))
+					{
+					
+					}
+					
+					fgets(GPS_buf.flag_data,256,fp);
+					memcpy(GPS_buf.data,GPS_buf.flag_data,256);
+				}while(!strstr(GPS_buf.data,start));
+				memset(GPS_buf.flag_data,0,sizeof(GPS_buf.flag_data));
+				if((GPS_information->c_GPS_status=='V'||GPS_information->d_GPS_status==0)&&flag_GPS_status==0)
+					GPS_information->GPS_status_n=0;
+				else if((GPS_information->c_GPS_status=='A'||GPS_information->d_GPS_status==1)&&flag_GPS_status==1)
+					GPS_information->GPS_status_n=1;
+				else if(flag_GPS_status==-1)
+					GPS_information->GPS_status_n=-1;
+				if(flag_NUM_satellite==-1)
+					GPS_information->NUM_satellite=-1;
+
+				if(h_flag_K_speed>=GPS_information->K_speed&&l_flag_K_speed<=GPS_information->K_speed&&
+					GPS_information->NUM_satellite==flag_NUM_satellite&&
+					GPS_information->GPS_status_n==flag_GPS_status)
+				{
+					serial_number=s_number(serial_number);//序列号
+					date_output(GPS_information->date,GPS_information->time);//日期时间
+					EWNS_output(GPS_information->EW,GPS_information->longitude,GPS_information->NS,GPS_information->latitude);//经纬度
+					GPS_status_output(GPS_information->GPS_status_n);//定位状态
+					speed_output(GPS_information->N_speed,GPS_information->K_speed);//速度输出
+					NUM_satellite_output(GPS_information->NUM_satellite);//卫星颗数输出
+					PRN_output(l_SNR,GPS_information->GSA_PRN,GPS_information->GSV_SNR);//条件信噪比
+				}
+				if(over>65536)
+					break;//退出while(1)，文件处理完成	
+			}		
+			fclose(fp);	
+			printf("\n\n\n\n");
+			next=0;		
+		}	
+	}
+}
